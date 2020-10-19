@@ -1,8 +1,7 @@
 
 class Crypton {
-
 	static async QueryName(name) {
-		return fetch("https://"+name+".elastos.name/info.json")
+		return fetch("https://"+name+".elastos.name/info.json", { mode: "no-cors" })
   			.then(response => response.json())
 			.then (result => {
 				return result;
@@ -10,38 +9,54 @@ class Crypton {
 	}
 
 	static async QueryKey(name, key) {
-		return fetch("https://"+name+".elastos.name/"+key)
-			.then (result => {
-				return result.text();
-			});
+		var addr = "https://"+name+".elastos.name/"+key;
+
+		return fetch(addr, { mode: "no-cors" }).then(result => result.text());
+
+
+
 	}
 
 	constructor (abiArray, contractAddress, web3) {
 		this._web3 = web3;
+		this._contractAddress = contractAddress;
 		this._contact = new this._web3.eth.Contract(abiArray, contractAddress);
 	}
 
 	async _init_account (force) {
 		if (!force && this._account) return this._account;
-
 		var pthis = this;
-		return await this._web3.eth.getAccounts()
+
+		if (window.ethereum) {
+			return window.ethereum.request({ method: 'eth_requestAccounts' }).then(function(address) {
+				if (address.length > 0)
+					pthis._account = address[0];
+	        });
+        }
+
+		return this._web3.eth.getAccounts()
 			.then(function(accounts) {
+				if (!accounts || accounts.length == 0)
+					return "";
 				if (!pthis._account || pthis._account != accounts[0]) {
 					pthis._account = accounts[0];
 				}
-				return pthis._account;
+				return pthis._account.toLowerCase();
 			});
 	}
 
-	async _generate_option (price) {
+	async _generate_option (amount, abiData) {
 		var pthis = this;
 		return this._web3.eth.getGasPrice()
 			.then(function(gasPrice) {
-				if (price)
-					return { from: pthis._account, gasPrice: gasPrice, gas: 1000000, value: pthis._web3.utils.toWei(price, "ether") };
-				else
-					return { from: pthis._account, gasPrice: gasPrice, gas: 1000000, value:'0' };
+				var result = { to: pthis._contractAddress, from: pthis._account, gasPrice: '0x'+parseInt(gasPrice).toString(16), gas: '0x'+parseInt(1000000).toString(16), value:'0x0' };
+
+				if (amount && parseFloat(amount) > 0)
+					result.value = '0x'+parseInt(pthis._web3.utils.toWei(amount+"", "ether")).toString(16);
+				if (abiData)
+					result["data"] = abiData;
+
+				return result;
 			});
 	}
 
@@ -74,25 +89,47 @@ class Crypton {
 			.then(function() {
         		return pthis._contact.methods.totalSupply().call();
 			})
-			.then(async function(count) {
+			.then(function(count) {
 				var result = [];
+				var pool = [];
 
 				for (var i=start; i<count && (!end || i<end); i++) {
-					var tokenid = await pthis._contact.methods.tokenByIndex(i).call();
-					var owner = await pthis._contact.methods.ownerOf(tokenid).call();
-					var name = await pthis._contact.methods.tokenURI(tokenid).call();
-					var expiration = await pthis._contact.methods.tokenExpiration(tokenid).call();
-					var price = await pthis._contact.methods.tokenPrice(tokenid).call();
-					result.push({
-						"tokenId": tokenid,
-						"name": name,
-						"owner": owner,
-						"expiration": expiration,
-						"price": pthis._web3.utils.fromWei(price, "ether")
-					});
+					(function(){
+						var tokenid, owner, name, expiration, price;
 
+						pool.push(pthis._contact.methods.tokenByIndex(i).call()
+							.then(function(ret) {
+								tokenid = ret;
+								return pthis._contact.methods.ownerOf(tokenid).call();
+							})
+							.then(function(ret) {
+								owner = ret;
+								return pthis._contact.methods.tokenURI(tokenid).call();
+							})
+							.then(function(ret) {
+								name = ret;
+								return pthis._contact.methods.tokenExpiration(tokenid).call();
+							})
+							.then(function(ret) {
+								expiration = ret;
+								return pthis._contact.methods.tokenPrice(tokenid).call();
+							})
+							.then(function(ret) {
+								price = ret;
+								result.push({
+									"tokenId": tokenid,
+									"name": name,
+									"owner": owner,
+									"expiration": expiration,
+									"price": pthis._web3.utils.fromWei(price, "ether")
+								});
+							}));
+					})();
 				}
-				return result;
+
+				return Promise.all(pool).then(() =>{
+					return result;
+				});
 			})
 			.catch(function(){
 				return [];
@@ -107,22 +144,40 @@ class Crypton {
 			})
 			.then(async function(count) {
 				var result = [];
+				var pool = [];
 
 				for (var i=0; i<count; i++) {
-					var tokenid = await pthis._contact.methods.tokenOfOwnerByIndex(address, i).call();
-					var owner = address;
-					var name = await pthis._contact.methods.tokenURI(tokenid).call();
-					var expiration = await pthis._contact.methods.tokenExpiration(tokenid).call();
-					var price = await pthis._contact.methods.tokenPrice(tokenid).call();
-					result.push({
-						"tokenId": tokenid,
-						"name": name,
-						"owner": owner,
-						"expiration": expiration,
-						"price": pthis._web3.utils.fromWei(price, "ether")
-					});
+					(function() {
+						var tokenid, owner, name, expiration, price;
+
+						pool.push(pthis._contact.methods.tokenOfOwnerByIndex(address, i).call()
+							.then(function(ret) {
+								tokenid = ret;
+								return pthis._contact.methods.tokenURI(tokenid).call();
+							})
+							.then(function(ret) {
+								name = ret;
+								return pthis._contact.methods.tokenExpiration(tokenid).call();
+							})
+							.then(function(ret) {
+								expiration = ret;
+								return pthis._contact.methods.tokenPrice(tokenid).call();
+							})
+							.then(function(ret) {
+								price = ret;
+								result.push({
+									"tokenId": tokenid,
+									"name": name,
+									"owner": owner,
+									"expiration": expiration,
+									"price": pthis._web3.utils.fromWei(price, "ether")
+								});
+							}));
+					})();
 				}
-				return result;
+				return Promise.all(pool).then(() =>{
+					return result;
+				});
 			})
 			.catch(function(){
 				return [];
@@ -168,12 +223,12 @@ class Crypton {
 			.then(function(x) {
 				return pthis._web3.utils.fromWei(x, "ether");
 			})
-			.catch(function(){
+			.catch(function(err){
 				return -1;
 			});
 	}
 
-	async getRenewalPrice (name) {
+	async getRenewalPrice (level) {
 		var pthis = this;
 		return this._init_account()
 			.then(function() {
@@ -185,6 +240,28 @@ class Crypton {
 				}
 				else if (level == 3) {
 					return pthis._contact.methods.renewal_level3().call();
+				}
+			})
+			.then(function(x) {
+				return pthis._web3.utils.fromWei(x, "ether");
+			})
+			.catch(function(){
+				return -1;
+			});
+	}
+
+	async getNamesCount (level) {
+		var pthis = this;
+		return this._init_account()
+			.then(function() {
+				if (level == 1) {
+					return pthis._contact.methods.count_level1().call();
+				}
+				else if (level == 2) {
+					return pthis._contact.methods.count_level2().call();
+				}
+				else if (level == 3) {
+					return pthis._contact.methods.count_level3().call();
 				}
 			})
 			.then(function(x) {
@@ -209,67 +286,185 @@ class Crypton {
 
 	async transfer (to, name) {
 		var pthis = this;
+		var abiData = this._contact.methods.transfer(pthis._account, to, name).encodeABI();
 		return this._init_account()
 			.then(function() {
-				return pthis._generate_option("0.1");
+				return pthis._generate_option("0.1", abiData);
 			})
 			.then(function(option) {
-        		return pthis._contact.methods.transfer(pthis._account, to, name).send(option);
+				if (window.ethereum) {
+					window.ethereum.request({ method: 'eth_sendTransaction', params: [option] });
+					//.then(console.log).catch(err=>console.log);
+			    }
+			    else {
+			    	reject("Not found ethereum.");
+			    }
+			});
+	}
+
+	async renew (to, name) {
+		var pthis = this;
+		var abiData = this._contact.methods.renewToken(pthis._account, to, name).encodeABI();
+		return this._init_account()
+			.then(function() {
+				return pthis.getRenewalPrice(name);
+			})
+			.then(function(price) {
+				return pthis._generate_option(price, abiData);
+			})
+			.then(function(option) {
+				if (window.ethereum) {
+					window.ethereum.request({ method: 'eth_sendTransaction', params: [option] });
+					//.then(console.log).catch(err=>console.log);
+			    }
+			    else {
+			    	reject("Not found ethereum.");
+			    }
 			});
 	}
 
 	async registerName (name, price) {
 		var pthis = this;
+		var abiData = this._contact.methods.externalMint(name).encodeABI();
 		return this._init_account()
 			.then(function() {
-				return pthis._generate_option(price);
+				return pthis._generate_option(price, abiData);
 			})
 			.then(function(option) {
-				return pthis._contact.methods.externalMint(name).send(option);	
+				if (window.ethereum) {
+					window.ethereum.request({ method: 'eth_sendTransaction', params: [option] });
+					//.then(console.log).catch(err=>console.log);
+			    }
+			    else {
+			    	reject("Not found ethereum.");
+			    }
 			});
 	}
 
 	async generateName (to, name) {
 		var pthis = this;
+		var abiData = this._contact.methods.mint(to, name).encodeABI();
 		return this._init_account()
 			.then(function() {
-				return pthis._generate_option();
+				return pthis._generate_option(0, abiData);
 			})
 			.then(function(option) {
-				return pthis._contact.methods.mint(to, name).send(option);
+				if (window.ethereum) {
+					window.ethereum.request({ method: 'eth_sendTransaction', params: [option] });
+					//.then(console.log).catch(err=>console.log);
+			    }
+			    else {
+			    	reject("Not found ethereum.");
+			    }
+			});
+	}
+
+	async approveName (to, name) {
+		var pthis = this;
+		var tokenId = pthis._web3.utils.hexToNumberString("0x"+sha256(name));
+		var abiData = this._contact.methods.approve(to, tokenId).encodeABI();
+		return this._init_account()
+			.then(function() {
+				return pthis._generate_option(0, abiData);
+			})
+			.then(function(option) {
+				if (window.ethereum) {
+					window.ethereum.request({ method: 'eth_sendTransaction', params: [option] });
+					//.then(console.log).catch(err=>console.log);
+			    }
+			    else {
+			    	reject("Not found ethereum.");
+			    }
+			});
+	}
+
+	async recycleToken (name) {
+		var pthis = this;
+		var abiData = this._contact.methods.recycleToken(name).encodeABI();
+		return this._init_account()
+			.then(function() {
+				return pthis._generate_option(0, abiData);
+			})
+			.then(function(option) {
+				if (window.ethereum) {
+					window.ethereum.request({ method: 'eth_sendTransaction', params: [option] });
+					//.then(console.log).catch(err=>console.log);
+			    }
+			    else {
+			    	reject("Not found ethereum.");
+			    }
 			});
 	}
 
 	async setBasicInfo (name, btc, eth, ela, did, pubkey) {
 		var pthis = this;
+		var abiData = this._contact.methods.setBasicInfo(name, btc, eth, ela, did, pubkey).encodeABI();
 		return this._init_account()
 			.then(function() {
-				return pthis._generate_option();
+				return pthis._generate_option(0, abiData);
 			})
 			.then(function(option) {
-				return pthis._contact.methods.setBasicInfo(name, btc, eth, ela, did, pubkey).send(option);
+				if (window.ethereum) {
+					window.ethereum.request({ method: 'eth_sendTransaction', params: [option] });
+					//.then(console.log).catch(err=>console.log);
+			    }
+			    else {
+			    	reject("Not found ethereum.");
+			    }
 			});
 	}
 
 	async setKeyword (name, key, value) {
 		var pthis = this;
+		var abiData = this._contact.methods.setKeyword(window.cryptoName, key, value).encodeABI();
 		return this._init_account()
 			.then(function() {
-				return pthis._generate_option();
+				return pthis._generate_option(0, abiData);
 			})
 			.then(function(option) {
-				return pthis._contact.methods.setKeyword(name, key, value).send(option);
+				if (window.ethereum) {
+					window.ethereum.request({ method: 'eth_sendTransaction', params: [option] });
+					//.then(console.log).catch(err=>console.log);
+			    }
+			    else {
+			    	reject("Not found ethereum.");
+			    }
+			});
+	}
+
+	async removeKeyword (name, key) {
+		var pthis = this;
+		var abiData = this._contact.methods.removeKeyword(name, key).encodeABI();
+		return this._init_account()
+			.then(function() {
+				return pthis._generate_option(0, abiData);
+			})
+			.then(function(option) {
+				if (window.ethereum) {
+					window.ethereum.request({ method: 'eth_sendTransaction', params: [option] });
+					//.then(console.log).catch(err=>console.log);
+			    }
+			    else {
+			    	reject("Not found ethereum.");
+			    }
 			});
 	}
 
 	async withdraw (value) {
 		var pthis = this;
+		var abiData = this._contact.methods.withdraw(value).encodeABI();
 		return this._init_account()
 			.then(function() {
-				return pthis._generate_option();
+				return pthis._generate_option(0, abiData);
 			})
 			.then(function(option) {
-				return pthis._contact.methods.withdraw(value).send(option);
+				if (window.ethereum) {
+					window.ethereum.request({ method: 'eth_sendTransaction', params: [option] });
+					//.then(console.log).catch(err=>console.log);
+			    }
+			    else {
+			    	reject("Not found ethereum.");
+			    }
 			});
 	}
 
@@ -290,7 +485,7 @@ class Crypton {
 	}
 
 	async getNameProfile (name) {
-		var nameInfo = {"name":name};
+		var nameInfo = {"name": name};
 		var pthis = this;
 		return this._init_account()
 			.then(function(option) {
@@ -313,17 +508,6 @@ class Crypton {
 			})
 			.then (function (ret) {
 				return nameInfo;
-			});
-	}
-
-	async removeKeyword (name, key) {
-		var pthis = this;
-		return this._init_account()
-			.then(function() {
-				return pthis._generate_option();
-			})
-			.then(function(option) {
-				return pthis._contact.methods.removeKeyword(name, key).send(option);
 			});
 	}
 
