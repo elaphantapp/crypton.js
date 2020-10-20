@@ -1,6 +1,6 @@
 {
   "name": "cryptoname",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "cryptoname js lib",
   "main": "crypton.js",
   "scripts": {
